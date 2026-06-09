@@ -231,6 +231,7 @@ create table if not exists manic_minute_runtime_state
     active boolean default false not null,
     active_server_id varchar(32),
     active_channel_id varchar(32),
+    cooldown_until timestamp with time zone,
     updated_reason varchar(50),
     updated_at timestamp with time zone not null
 );

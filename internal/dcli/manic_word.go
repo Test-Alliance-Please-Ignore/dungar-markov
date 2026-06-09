@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"gitlab.int.magneato.site/dungar/prototype/internal/db"
 	"gitlab.int.magneato.site/dungar/prototype/internal/utils"
@@ -29,7 +30,24 @@ func PrintManicMinuteWord() {
 		log.Fatalf("no persisted manic minute trigger word for mode=%s; start dungar run first", mode)
 	}
 
-	fmt.Printf("Current manic-word: %s (current chance: %.0f%%)\n", state.TriggerWord, state.StartChance*100)
+	fmt.Println(formatManicMinuteWord(state, time.Now().UTC()))
+}
+
+func formatManicMinuteWord(state *db.ManicMinuteRuntimeState, now time.Time) string {
+	cooldownLabel := "none"
+	if state != nil && state.HasCooldown && !state.CooldownUntil.IsZero() {
+		remaining := state.CooldownUntil.Sub(now).Round(time.Second)
+		if remaining > 0 {
+			cooldownLabel = remaining.String()
+		}
+	}
+
+	return fmt.Sprintf(
+		"Current manic-word: %s (current chance: %.0f%%, cooldown remaining: %s)",
+		state.TriggerWord,
+		state.StartChance*100,
+		cooldownLabel,
+	)
 }
 
 func normalizeManicMinuteProtocolMode(mode string) (string, error) {

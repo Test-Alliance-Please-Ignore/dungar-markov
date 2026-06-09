@@ -44,6 +44,8 @@ type ManicMinuteRuntimeState struct {
 	Active          bool
 	ActiveServerID  string
 	ActiveChannelID string
+	HasCooldown     bool
+	CooldownUntil   time.Time
 	UpdatedReason   string
 	UpdatedAt       time.Time
 }
@@ -330,6 +332,7 @@ func GetManicMinuteRuntimeState(protocolDriver string) (*ManicMinuteRuntimeState
 			active,
 			COALESCE(active_server_id, ''),
 			COALESCE(active_channel_id, ''),
+			cooldown_until,
 			COALESCE(updated_reason, ''),
 			updated_at
 		FROM manic_minute_runtime_state
@@ -341,6 +344,7 @@ func GetManicMinuteRuntimeState(protocolDriver string) (*ManicMinuteRuntimeState
 	}
 
 	state := &ManicMinuteRuntimeState{}
+	var cooldownUntil sql.NullTime
 	if err := row.Scan(
 		&state.ProtocolDriver,
 		&state.TriggerWord,
@@ -348,6 +352,7 @@ func GetManicMinuteRuntimeState(protocolDriver string) (*ManicMinuteRuntimeState
 		&state.Active,
 		&state.ActiveServerID,
 		&state.ActiveChannelID,
+		&cooldownUntil,
 		&state.UpdatedReason,
 		&state.UpdatedAt,
 	); err != nil {
@@ -356,6 +361,11 @@ func GetManicMinuteRuntimeState(protocolDriver string) (*ManicMinuteRuntimeState
 		}
 
 		return nil, err
+	}
+
+	state.HasCooldown = cooldownUntil.Valid
+	if cooldownUntil.Valid {
+		state.CooldownUntil = cooldownUntil.Time
 	}
 
 	return state, nil
@@ -370,6 +380,11 @@ func UpsertManicMinuteRuntimeState(state *ManicMinuteRuntimeState) error {
 		state.UpdatedAt = time.Now().UTC()
 	}
 
+	var cooldownUntil interface{}
+	if state.HasCooldown && !state.CooldownUntil.IsZero() {
+		cooldownUntil = state.CooldownUntil.UTC()
+	}
+
 	_, err := ConExec(`
 		INSERT INTO manic_minute_runtime_state(
 			protocol_driver,
@@ -378,16 +393,18 @@ func UpsertManicMinuteRuntimeState(state *ManicMinuteRuntimeState) error {
 			active,
 			active_server_id,
 			active_channel_id,
+			cooldown_until,
 			updated_reason,
 			updated_at
 		)
-		VALUES($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8)
+		VALUES($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), $9)
 		ON CONFLICT (protocol_driver) DO UPDATE
 		SET trigger_word = EXCLUDED.trigger_word,
 		    start_chance = EXCLUDED.start_chance,
 		    active = EXCLUDED.active,
 		    active_server_id = EXCLUDED.active_server_id,
 		    active_channel_id = EXCLUDED.active_channel_id,
+		    cooldown_until = EXCLUDED.cooldown_until,
 		    updated_reason = EXCLUDED.updated_reason,
 		    updated_at = EXCLUDED.updated_at
 	`,
@@ -397,6 +414,7 @@ func UpsertManicMinuteRuntimeState(state *ManicMinuteRuntimeState) error {
 		state.Active,
 		state.ActiveServerID,
 		state.ActiveChannelID,
+		cooldownUntil,
 		state.UpdatedReason,
 		state.UpdatedAt.UTC(),
 	)

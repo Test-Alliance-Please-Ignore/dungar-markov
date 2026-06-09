@@ -45,6 +45,7 @@ type manicMinuteManager struct {
 	activeTriggerMessageID  string
 	activeTriggeredByUserID string
 	endsAt                  time.Time
+	cooldownUntil           time.Time
 	messageCount            int
 	startMissCount          int
 
@@ -118,6 +119,8 @@ func (mm *manicMinuteManager) persistRuntimeStateLocked(reason string) {
 		Active:          mm.active,
 		ActiveServerID:  mm.activeServerID,
 		ActiveChannelID: mm.activeChannelID,
+		HasCooldown:     !mm.cooldownUntil.IsZero(),
+		CooldownUntil:   mm.cooldownUntil,
 		UpdatedReason:   reason,
 		UpdatedAt:       time.Now().UTC(),
 	})
@@ -358,6 +361,7 @@ func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, trigg
 	mm.activeTriggerMessageID = triggerMessageID
 	mm.activeTriggeredByUserID = triggeredByUserID
 	mm.endsAt = startedAt.Add(manicMinuteDuration)
+	mm.cooldownUntil = cooldownUntil
 	mm.messageCount = 1
 	mm.startMissCount = 0
 	mm.version++
