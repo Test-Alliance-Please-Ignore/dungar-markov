@@ -9,7 +9,7 @@ var masterChanceList = map[string]float64{
 	"commentateScheduler--skip":            0.60,
 	"commentateHandler--commentate":        0.009,
 	"dadJokeHandler--markov":               0.01,
-	"manicMinuteHandler--start":            0.20,
+	"manicMinuteHandler--start":            0.25,
 	"markovHandler--badTouch":              0.10,
 	"negativeMentionSnarkHandler--respond": 0.18,
 	"noYouHandler--regexp":                 0.0005,

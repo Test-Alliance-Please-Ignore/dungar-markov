@@ -202,6 +202,7 @@ create table if not exists manic_minute_events
     stop_reason varchar(50),
     message_count integer default 0 not null,
     started_at timestamp with time zone not null,
+    cooldown_until timestamp with time zone not null,
     ended_at timestamp with time zone
 );
 
@@ -214,13 +215,19 @@ create index if not exists manic_minute_events_channel_started_idx
 create index if not exists manic_minute_events_word_started_idx
     on manic_minute_events (server_id, trigger_word, started_at desc);
 
+create index if not exists manic_minute_events_channel_cooldown_idx
+    on manic_minute_events (server_id, channel_id, cooldown_until desc);
+
+create index if not exists manic_minute_events_word_cooldown_idx
+    on manic_minute_events (server_id, trigger_word, cooldown_until desc);
+
 create table if not exists manic_minute_runtime_state
 (
     protocol_driver varchar(20) not null
         constraint manic_minute_runtime_state_pk
             primary key,
     trigger_word varchar(128) not null,
-    start_chance double precision default 0.20 not null,
+    start_chance double precision default 0.25 not null,
     active boolean default false not null,
     active_server_id varchar(32),
     active_channel_id varchar(32),

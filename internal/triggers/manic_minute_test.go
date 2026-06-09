@@ -213,3 +213,13 @@ func TestManicMinuteStartChanceEscalatesAndResetsOnRotate(t *testing.T) {
 	assert.InDelta(t, 0.20, status.StartChance, 0.0001)
 	assert.Equal(t, 0, status.StartMisses)
 }
+
+func TestPickManicMinuteCooldownDurationRange(t *testing.T) {
+	random.UseTestSeed()
+
+	for i := 0; i < 100; i++ {
+		duration := pickManicMinuteCooldownDuration()
+		assert.GreaterOrEqual(t, duration, 5*time.Minute)
+		assert.LessOrEqual(t, duration, 120*time.Minute)
+	}
+}

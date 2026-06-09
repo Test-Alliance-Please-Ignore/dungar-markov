@@ -108,13 +108,22 @@ func questionsHandler(svc *core2.Service, msg *core2.IncomingMessage) []*core2.R
 	for _, handler := range questionHandlers {
 		if handler.matches(contents) {
 			log.Println("question handling " + utils.GetFunctionName(handler.Handler))
-			msg := handler.Handler(contents, msg.ServerID)
+			out := handler.Handler(contents, msg.ServerID)
 
-			if msg == "" {
+			if out == "" {
 				continue
 			}
 
-			return core2.PrefixedSingleRsp(msg)
+			if handler.Trigger == percGameSubjectRegex {
+				rsp := core2.MakeRsp(out)
+				if svc != nil && (svc.DriverName() == "discord" || svc.DriverName() == "mock") {
+					rsp.MakeSubChannelIfPossible = true
+				}
+
+				return core2.SingleRsp(rsp)
+			}
+
+			return core2.PrefixedSingleRsp(out)
 		}
 	}
 

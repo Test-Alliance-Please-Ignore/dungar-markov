@@ -1,6 +1,7 @@
 package triggers
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,4 +144,46 @@ func TestQuestionsHandlerDirectedQuestionUsesMarkovFallback(t *testing.T) {
 	assert.True(t, rsp[0].HandledMessage)
 	assert.NotEmpty(t, rsp[0].Contents)
 	assert.NotContains(t, choices8Ball, rsp[0].Contents)
+}
+
+func TestQuestionsHandlerDirectedTwoOptionQuestionPicksProvidedOption(t *testing.T) {
+	random.UseTestSeed()
+
+	svc := initMockServices()
+	mockDriver.SetBotUser(core2.BotUser{
+		ID:      "454311604847378442",
+		Name:    "Dungarmatic",
+		IsBot:   true,
+		IsAdmin: false,
+	})
+
+	msg := makeMessage("@Dungarmatic tacos or burgers?", "bob", "arena")
+	rsp := questionsHandler(svc, msg)
+
+	assert.Len(t, rsp, 1)
+	assert.True(t, rsp[0].ConsumedMessage)
+	assert.True(t, rsp[0].HandledMessage)
+	assert.Contains(t, []string{"tacos", "burgers"}, strings.ToLower(strings.TrimSpace(rsp[0].Contents)))
+}
+
+func TestQuestionsHandlerDirectedPercentageSubjectRepliesDirectly(t *testing.T) {
+	random.UseTestSeed()
+
+	svc := initMockServices()
+	mockDriver.SetBotUser(core2.BotUser{
+		ID:      "454311604847378442",
+		Name:    "Dungarmatic",
+		IsBot:   true,
+		IsAdmin: false,
+	})
+
+	msg := makeMessage("@Dungarmatic how fried is xyz?", "bob", "arena")
+	rsp := questionsHandler(svc, msg)
+
+	assert.Len(t, rsp, 1)
+	assert.True(t, rsp[0].ConsumedMessage)
+	assert.True(t, rsp[0].HandledMessage)
+	assert.False(t, rsp[0].PrefixUsername)
+	assert.True(t, rsp[0].MakeSubChannelIfPossible)
+	assert.Regexp(t, regexp.MustCompile(`^xyz is \d+% fried\.$`), rsp[0].Contents)
 }

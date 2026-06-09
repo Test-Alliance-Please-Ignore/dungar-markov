@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	"gitlab.int.magneato.site/dungar/prototype/internal/utils"
@@ -19,6 +20,7 @@ type ManicMinuteEvent struct {
 	StopReason        string
 	MessageCount      int
 	StartedAt         time.Time
+	CooldownUntil     time.Time
 	EndedAt           time.Time
 }
 
@@ -46,24 +48,47 @@ type ManicMinuteRuntimeState struct {
 	UpdatedAt       time.Time
 }
 
-func StartManicMinuteEvent(serverID, channelID, triggerWord, triggerMessageID, triggeredByUserID string, startedAt time.Time) (int64, error) {
+var (
+	manicMinuteCooldownColumnCheck sync.Once
+	manicMinuteHasCooldownColumn   bool
+)
+
+func StartManicMinuteEvent(serverID, channelID, triggerWord, triggerMessageID, triggeredByUserID string, startedAt, cooldownUntil time.Time) (int64, error) {
 	if utils.InTestEnv() {
 		return 0, nil
 	}
 
-	row := ConQueryRow(`
-		INSERT INTO manic_minute_events(
-			server_id,
-			channel_id,
-			trigger_word,
-			trigger_message_id,
-			triggered_by_user_id,
-			status,
-			started_at
-		)
-		VALUES($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), 'active', $6)
-		RETURNING id
-	`, serverID, channelID, triggerWord, triggerMessageID, triggeredByUserID, startedAt.UTC())
+	var row *sql.Row
+	if manicMinuteEventHasCooldownColumn() {
+		row = ConQueryRow(`
+			INSERT INTO manic_minute_events(
+				server_id,
+				channel_id,
+				trigger_word,
+				trigger_message_id,
+				triggered_by_user_id,
+				status,
+				started_at,
+				cooldown_until
+			)
+			VALUES($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), 'active', $6, $7)
+			RETURNING id
+		`, serverID, channelID, triggerWord, triggerMessageID, triggeredByUserID, startedAt.UTC(), cooldownUntil.UTC())
+	} else {
+		row = ConQueryRow(`
+			INSERT INTO manic_minute_events(
+				server_id,
+				channel_id,
+				trigger_word,
+				trigger_message_id,
+				triggered_by_user_id,
+				status,
+				started_at
+			)
+			VALUES($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), 'active', $6)
+			RETURNING id
+		`, serverID, channelID, triggerWord, triggerMessageID, triggeredByUserID, startedAt.UTC())
+	}
 
 	if row == nil {
 		return 0, nil
@@ -93,19 +118,31 @@ func CompleteManicMinuteEvent(eventID int64, status, stopReason string, endedAt 
 	return err
 }
 
-func IsManicMinuteChannelOnCooldown(serverID, channelID string, duration time.Duration) bool {
-	if utils.InTestEnv() || serverID == "" || channelID == "" || duration <= 0 {
+func IsManicMinuteChannelOnCooldown(serverID, channelID string) bool {
+	if utils.InTestEnv() || serverID == "" || channelID == "" {
 		return false
 	}
 
-	row := ConQueryRow(`
-		SELECT 1
-		FROM manic_minute_events
-		WHERE server_id = $1
-		  AND channel_id = $2
-		  AND started_at >= CURRENT_TIMESTAMP - ($3 * INTERVAL '1 second')
-		LIMIT 1
-	`, serverID, channelID, int64(duration/time.Second))
+	var row *sql.Row
+	if manicMinuteEventHasCooldownColumn() {
+		row = ConQueryRow(`
+			SELECT 1
+			FROM manic_minute_events
+			WHERE server_id = $1
+			  AND channel_id = $2
+			  AND cooldown_until > CURRENT_TIMESTAMP
+			LIMIT 1
+		`, serverID, channelID)
+	} else {
+		row = ConQueryRow(`
+			SELECT 1
+			FROM manic_minute_events
+			WHERE server_id = $1
+			  AND channel_id = $2
+			  AND started_at >= CURRENT_TIMESTAMP - INTERVAL '120 minutes'
+			LIMIT 1
+		`, serverID, channelID)
+	}
 
 	if row == nil {
 		return false
@@ -119,19 +156,31 @@ func IsManicMinuteChannelOnCooldown(serverID, channelID string, duration time.Du
 	return exists == 1
 }
 
-func IsManicMinuteWordOnCooldown(serverID, word string, duration time.Duration) bool {
-	if utils.InTestEnv() || serverID == "" || word == "" || duration <= 0 {
+func IsManicMinuteWordOnCooldown(serverID, word string) bool {
+	if utils.InTestEnv() || serverID == "" || word == "" {
 		return false
 	}
 
-	row := ConQueryRow(`
-		SELECT 1
-		FROM manic_minute_events
-		WHERE server_id = $1
-		  AND trigger_word = $2
-		  AND started_at >= CURRENT_TIMESTAMP - ($3 * INTERVAL '1 second')
-		LIMIT 1
-	`, serverID, word, int64(duration/time.Second))
+	var row *sql.Row
+	if manicMinuteEventHasCooldownColumn() {
+		row = ConQueryRow(`
+			SELECT 1
+			FROM manic_minute_events
+			WHERE server_id = $1
+			  AND trigger_word = $2
+			  AND cooldown_until > CURRENT_TIMESTAMP
+			LIMIT 1
+		`, serverID, word)
+	} else {
+		row = ConQueryRow(`
+			SELECT 1
+			FROM manic_minute_events
+			WHERE server_id = $1
+			  AND trigger_word = $2
+			  AND started_at >= CURRENT_TIMESTAMP - INTERVAL '120 minutes'
+			LIMIT 1
+		`, serverID, word)
+	}
 
 	if row == nil {
 		return false
@@ -150,24 +199,48 @@ func GetMostRecentManicMinuteEvent(serverID string) (*ManicMinuteEvent, error) {
 		return nil, nil
 	}
 
-	row := ConQueryRow(`
-		SELECT
-			id,
-			server_id,
-			channel_id,
-			trigger_word,
-			COALESCE(trigger_message_id, ''),
-			COALESCE(triggered_by_user_id, ''),
-			status,
-			COALESCE(stop_reason, ''),
-			message_count,
-			started_at,
-			COALESCE(ended_at, started_at)
-		FROM manic_minute_events
-		WHERE server_id = $1
-		ORDER BY started_at DESC
-		LIMIT 1
-	`, serverID)
+	var row *sql.Row
+	if manicMinuteEventHasCooldownColumn() {
+		row = ConQueryRow(`
+			SELECT
+				id,
+				server_id,
+				channel_id,
+				trigger_word,
+				COALESCE(trigger_message_id, ''),
+				COALESCE(triggered_by_user_id, ''),
+				status,
+				COALESCE(stop_reason, ''),
+				message_count,
+				started_at,
+				cooldown_until,
+				COALESCE(ended_at, started_at)
+			FROM manic_minute_events
+			WHERE server_id = $1
+			ORDER BY started_at DESC
+			LIMIT 1
+		`, serverID)
+	} else {
+		row = ConQueryRow(`
+			SELECT
+				id,
+				server_id,
+				channel_id,
+				trigger_word,
+				COALESCE(trigger_message_id, ''),
+				COALESCE(triggered_by_user_id, ''),
+				status,
+				COALESCE(stop_reason, ''),
+				message_count,
+				started_at,
+				started_at + INTERVAL '120 minutes',
+				COALESCE(ended_at, started_at)
+			FROM manic_minute_events
+			WHERE server_id = $1
+			ORDER BY started_at DESC
+			LIMIT 1
+		`, serverID)
+	}
 
 	if row == nil {
 		return nil, nil
@@ -347,6 +420,7 @@ func scanManicMinuteEvent(scanner interface {
 		&ev.StopReason,
 		&ev.MessageCount,
 		&ev.StartedAt,
+		&ev.CooldownUntil,
 		&ev.EndedAt,
 	); err != nil {
 		return nil, err
@@ -357,12 +431,38 @@ func scanManicMinuteEvent(scanner interface {
 
 func (ev ManicMinuteEvent) String() string {
 	return fmt.Sprintf(
-		"id=%d server=%s channel=%s trigger=%s status=%s messages=%d",
+		"id=%d server=%s channel=%s trigger=%s status=%s messages=%d cooldown_until=%s",
 		ev.ID,
 		ev.ServerID,
 		ev.ChannelID,
 		ev.TriggerWord,
 		ev.Status,
 		ev.MessageCount,
+		ev.CooldownUntil.Format(time.RFC3339),
 	)
+}
+
+func manicMinuteEventHasCooldownColumn() bool {
+	if utils.InTestEnv() {
+		return false
+	}
+
+	manicMinuteCooldownColumnCheck.Do(func() {
+		row := ConQueryRow(`
+			SELECT EXISTS(
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = CURRENT_SCHEMA()
+				  AND table_name = 'manic_minute_events'
+				  AND column_name = 'cooldown_until'
+			)
+		`)
+		if row == nil {
+			return
+		}
+
+		_ = row.Scan(&manicMinuteHasCooldownColumn)
+	})
+
+	return manicMinuteHasCooldownColumn
 }

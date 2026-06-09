@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	manicMinuteDuration        = 1 * time.Minute
-	manicMinuteTick            = 5 * time.Second
-	manicMinuteChannelCooldown = 12 * time.Hour
-	manicMinuteWordCooldown    = 24 * time.Hour
-	manicMinuteChanceStep      = 0.02
-	manicMinuteChanceMax       = 1.0
+	manicMinuteDuration           = 1 * time.Minute
+	manicMinuteTick               = 5 * time.Second
+	manicMinuteCooldownMinMinutes = 5
+	manicMinuteCooldownMaxMinutes = 120
+	manicMinuteChanceStep         = 0.02
+	manicMinuteChanceMax          = 1.0
 )
 
 var manicMinuteStopPhrases = []string{
@@ -270,6 +270,12 @@ func (mm *manicMinuteManager) currentStartChanceLocked() float64 {
 	return chance
 }
 
+func pickManicMinuteCooldownDuration() time.Duration {
+	span := manicMinuteCooldownMaxMinutes - manicMinuteCooldownMinMinutes + 1
+	minutes := manicMinuteCooldownMinMinutes + random.Int(span)
+	return time.Duration(minutes) * time.Minute
+}
+
 func (mm *manicMinuteManager) recordStartRollMiss(expectedWord string) (float64, float64, bool) {
 	mm.lock.Lock()
 	defer mm.lock.Unlock()
@@ -304,7 +310,7 @@ func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, trigg
 	}
 
 	if manicMinuteUsesPersistence() && !bypassCooldown {
-		if db.IsManicMinuteChannelOnCooldown(serverID, channelID, manicMinuteChannelCooldown) {
+		if db.IsManicMinuteChannelOnCooldown(serverID, channelID) {
 			log.Printf(
 				"[ManicMinute] channel cooldown blocked channelID='%s' trigger='%s'",
 				channelID,
@@ -313,7 +319,7 @@ func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, trigg
 			return "", false
 		}
 
-		if db.IsManicMinuteWordOnCooldown(serverID, mm.triggerWord, manicMinuteWordCooldown) {
+		if db.IsManicMinuteWordOnCooldown(serverID, mm.triggerWord) {
 			log.Printf(
 				"[ManicMinute] word cooldown blocked trigger='%s' serverID='%s'; rotating",
 				mm.triggerWord,
@@ -326,6 +332,8 @@ func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, trigg
 
 	eventID := int64(0)
 	startedAt := time.Now().UTC()
+	cooldownDuration := pickManicMinuteCooldownDuration()
+	cooldownUntil := startedAt.Add(cooldownDuration)
 	if manicMinuteUsesPersistence() {
 		startedEventID, err := db.StartManicMinuteEvent(
 			serverID,
@@ -334,6 +342,7 @@ func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, trigg
 			triggerMessageID,
 			triggeredByUserID,
 			startedAt,
+			cooldownUntil,
 		)
 		if err != nil {
 			log.Printf("[ManicMinute] failed to persist start trigger='%s': %v", mm.triggerWord, err)
@@ -355,11 +364,12 @@ func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, trigg
 	mm.persistRuntimeStateLocked("start")
 
 	log.Printf(
-		"[ManicMinute] Started channelID='%s' serverID='%s' trigger='%s' endsAt=%s bypassCooldown=%t",
+		"[ManicMinute] Started channelID='%s' serverID='%s' trigger='%s' endsAt=%s cooldown=%s bypassCooldown=%t",
 		channelID,
 		serverID,
 		mm.triggerWord,
 		mm.endsAt.Format(time.RFC3339),
+		cooldownDuration,
 		bypassCooldown,
 	)
 

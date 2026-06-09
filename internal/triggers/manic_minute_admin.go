@@ -83,15 +83,13 @@ func renderManicMinuteStatus(svc *core2.Service, msg *core2.IncomingMessage) str
 	channelCooldown := false
 	wordCooldown := false
 	if manicMinuteUsesPersistence() {
-		channelCooldown = db.IsManicMinuteChannelOnCooldown(msg.ServerID, msg.ChannelID, manicMinuteChannelCooldown)
-		wordCooldown = db.IsManicMinuteWordOnCooldown(msg.ServerID, status.TriggerWord, manicMinuteWordCooldown)
+		channelCooldown = db.IsManicMinuteChannelOnCooldown(msg.ServerID, msg.ChannelID)
+		wordCooldown = db.IsManicMinuteWordOnCooldown(msg.ServerID, status.TriggerWord)
 	}
 
 	parts := []string{
-		fmt.Sprintf("trigger='%s'", status.TriggerWord),
 		fmt.Sprintf("active=%t", status.Active),
-		fmt.Sprintf("start_chance=%.0f%%", status.StartChance*100),
-		fmt.Sprintf("start_misses=%d", status.StartMisses),
+		fmt.Sprintf("cooldown_range=%dm-%dm", manicMinuteCooldownMinMinutes, manicMinuteCooldownMaxMinutes),
 		fmt.Sprintf("channel_cooldown=%t", channelCooldown),
 		fmt.Sprintf("word_cooldown=%t", wordCooldown),
 	}
