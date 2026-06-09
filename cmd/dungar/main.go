@@ -38,8 +38,17 @@ func main() {
 	case "run":
 		dcli.ProtocolRunner()
 
+	case "learn":
+		dcli.Learn()
+
+	case "manic-word", "manic-trigger":
+		dcli.PrintManicMinuteWord()
+
 	case "bot-info":
 		dcli.PrintBotInfo()
+
+	case "backfill-discord", "discord-backfill":
+		dcli.BackfillDiscordHistory()
 
 	case "import-fortunes":
 		if len(os.Args) <= 2 {
@@ -99,7 +108,10 @@ usage: dungar <routine> [options]
 
 routines:
   - dungar run
+  - dungar learn
+  - dungar manic-word
   - dungar bot-info
+  - dungar backfill-discord
   - dungar import-fortunes <file>
   - dungar help
   - dungar learn1-file <file>

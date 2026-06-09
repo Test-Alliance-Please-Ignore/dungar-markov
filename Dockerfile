@@ -1,14 +1,25 @@
-FROM gitlab.int.magneato.site:4567/dungar/test-image:latest
-LABEL MAINTAINER="Jinli <jinli@jinli.dev>"
+FROM golang:1.21-bookworm AS build
 
-COPY . ./
+WORKDIR /src
 
-RUN find . -type d -print0 | xargs -0 chmod 0755 && \
-    find . -type f -print0 | xargs -0 chmod 0644 && \
-    mv secrets.test.ini secrets.ini && \
-    mv settings.test.ini settings.ini && \
-    chmod +x ./tools/*.sh
+COPY go.mod go.sum ./
+RUN go mod download
 
-ENV IN_CI_ENV 1
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -o /out/dungar -ldflags="-s -w" ./cmd/dungar
 
-CMD ["./dungar", "botinfo"]
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --system --create-home --home-dir /app dungar
+
+WORKDIR /app
+
+COPY --from=build /out/dungar /usr/local/bin/dungar
+
+USER dungar
+
+ENTRYPOINT ["/usr/local/bin/dungar"]
+CMD ["run"]
