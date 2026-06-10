@@ -60,7 +60,7 @@ func manicMinuteAdminHandler(svc *core2.Service, msg *core2.IncomingMessage) []*
 			}
 		}
 
-		triggerWord, started := manicMinuteState.start(msg.ChannelID, msg.ServerID, msg.ID, msg.UserID, true)
+		_, started := manicMinuteState.start(msg.ChannelID, msg.ServerID, msg.ID, msg.UserID, true)
 		if !started {
 			if manicMinuteState.isActive() {
 				return core2.MakeSingleRsp("MANIC MINUTE is already active.")
@@ -69,7 +69,7 @@ func manicMinuteAdminHandler(svc *core2.Service, msg *core2.IncomingMessage) []*
 			return core2.MakeSingleRsp("Could not start MANIC MINUTE right now.")
 		}
 
-		return core2.MakeSingleRsp(manicMinuteGenerate(triggerWord))
+		return core2.MakeSingleRsp(manicMinuteGenerate())
 	default:
 		return core2.MakeSingleRsp("Usage: !manic <status|stats|test|stop|rotate>")
 	}

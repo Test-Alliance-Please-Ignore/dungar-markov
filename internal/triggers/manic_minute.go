@@ -68,11 +68,10 @@ type manicMinuteStatus struct {
 }
 
 type manicMinuteScheduleSnapshot struct {
-	TriggerWord string
-	ChannelID   string
-	ServerID    string
-	Version     uint64
-	Concluded   bool
+	ChannelID string
+	ServerID  string
+	Version   uint64
+	Concluded bool
 }
 
 var (
@@ -600,10 +599,9 @@ func (mm *manicMinuteManager) snapshotForScheduledMessage(now time.Time) (*manic
 	}
 
 	return &manicMinuteScheduleSnapshot{
-		TriggerWord: mm.triggerWord,
-		ChannelID:   mm.activeChannelID,
-		ServerID:    mm.activeServerID,
-		Version:     mm.version,
+		ChannelID: mm.activeChannelID,
+		ServerID:  mm.activeServerID,
+		Version:   mm.version,
 	}, true
 }
 
@@ -641,7 +639,7 @@ func manicMinuteStartResponses(triggeredBy string, word string) []*core2.Respons
 		core2.MakeRsp(fmt.Sprintf("%s triggered a dungarmatic manic minute by saying %q.", triggeredBy, word)),
 	}
 
-	if contents := strings.TrimSpace(manicMinuteGenerate(word)); contents != "" {
+	if contents := manicMinuteGenerate(); contents != "" {
 		responses = append(responses, core2.MakeRsp(contents))
 	}
 
@@ -773,8 +771,8 @@ func manicMinuteScheduler(_ *core2.Service) []*core2.ScheduledMessage {
 		return manicMinuteConclusionScheduledMessages(snapshot.ChannelID, snapshot.ServerID, now)
 	}
 
-	contents := manicMinuteGenerate(snapshot.TriggerWord)
-	if strings.TrimSpace(contents) == "" {
+	contents := manicMinuteGenerate()
+	if contents == "" {
 		return nil
 	}
 
@@ -925,19 +923,19 @@ func isManicMinuteStopMessage(svc *core2.Service, msg *core2.IncomingMessage) bo
 	return false
 }
 
-func manicMinuteGenerate(seed string) string {
-	seed = sanitizeManicMinuteTriggerWord(seed)
-	if seed == "" {
-		seed = sanitizeManicMinuteTriggerWord(markovPickWord())
-	}
+// manicMinuteGenerate produces a burst of random Markov output. The text is
+// intentionally unrelated to the trigger word: the word only starts the
+// minute, it does not theme it.
+func manicMinuteGenerate() string {
+	for attempt := 0; attempt < 10; attempt++ {
+		seed := strings.TrimSpace(markovPickWord())
+		if seed == "" {
+			continue
+		}
 
-	output := markovGenerate(seed)
-	if strings.TrimSpace(output) != "" {
-		return output
-	}
-
-	if seed != "" {
-		return seed
+		if output := strings.TrimSpace(markovGenerate(seed)); output != "" {
+			return output
+		}
 	}
 
 	return ""
