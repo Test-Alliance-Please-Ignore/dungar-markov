@@ -37,12 +37,16 @@ func manicMinuteAdminHandler(svc *core2.Service, msg *core2.IncomingMessage) []*
 		previous, next := manicMinuteState.rotate("admin-rotate")
 		return core2.MakeSingleRsp(fmt.Sprintf("Rotated manic trigger from '%s' to '%s'.", previous, next))
 	case "stop":
-		previous, next, stopped := manicMinuteState.stop("admin-stop")
-		if !stopped {
-			return core2.MakeSingleRsp(fmt.Sprintf("MANIC MINUTE is not active. Current trigger is '%s'.", next))
+		result := manicMinuteState.stop("admin-stop")
+		if !result.Stopped {
+			return core2.MakeSingleRsp(fmt.Sprintf("MANIC MINUTE is not active. Current trigger is '%s'.", result.NextWord))
 		}
 
-		return core2.MakeSingleRsp(fmt.Sprintf("Stopped MANIC MINUTE on '%s'. Next trigger is '%s'.", previous, next))
+		if result.ChannelID != msg.ChannelID {
+			manicMinuteState.queueConclusion(result.ChannelID, result.ServerID)
+		}
+
+		return core2.MakeSingleRsp(fmt.Sprintf("Stopped MANIC MINUTE on '%s'. Next trigger is '%s'.", result.PreviousWord, result.NextWord))
 	case "test":
 		if manicMinuteState.isActive() {
 			return core2.MakeSingleRsp("MANIC MINUTE is already active.")

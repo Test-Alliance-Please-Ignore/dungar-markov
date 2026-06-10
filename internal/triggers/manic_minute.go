@@ -3,6 +3,7 @@ package triggers
 import (
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -34,10 +35,13 @@ var manicMinuteStopPhrases = []string{
 type manicMinuteManager struct {
 	lock sync.Mutex
 
-	initialized bool
-	active      bool
+	initialized      bool
+	restoreAttempted bool
+	active           bool
 
 	triggerWord string
+
+	pendingConclusion *manicMinuteScheduleSnapshot
 
 	activeChannelID         string
 	activeServerID          string
@@ -90,11 +94,7 @@ func (mm *manicMinuteManager) initialize() {
 	mm.lock.Lock()
 	defer mm.lock.Unlock()
 
-	mm.initialized = true
-
-	if mm.triggerWord == "" {
-		mm.selectNewTriggerWordLocked("startup")
-	}
+	mm.ensureInitializedLocked("startup")
 }
 
 func (mm *manicMinuteManager) ensureInitializedLocked(reason string) {
@@ -103,8 +103,62 @@ func (mm *manicMinuteManager) ensureInitializedLocked(reason string) {
 	}
 
 	if mm.triggerWord == "" {
+		mm.restoreRuntimeStateLocked()
+	}
+
+	if mm.triggerWord == "" {
 		mm.selectNewTriggerWordLocked(reason)
 	}
+}
+
+// restoreRuntimeStateLocked reloads the persisted trigger word, accumulated
+// start chance, and cooldown so a restart continues where the last run left
+// off. An interrupted active minute is not resumed; the event is treated as
+// concluded.
+func (mm *manicMinuteManager) restoreRuntimeStateLocked() {
+	if mm.restoreAttempted || !manicMinuteUsesPersistence() {
+		return
+	}
+
+	mm.restoreAttempted = true
+
+	state, err := db.GetManicMinuteRuntimeState(utils.ProtocolMode())
+	if err != nil {
+		log.Printf("[ManicMinute] failed to restore runtime state: %v", err)
+		return
+	}
+
+	if state == nil {
+		return
+	}
+
+	word := sanitizeManicMinuteTriggerWord(state.TriggerWord)
+	if word == "" {
+		return
+	}
+
+	mm.triggerWord = word
+	mm.startMissCount = startMissCountForChance(state.StartChance)
+	if state.HasCooldown && state.CooldownUntil.After(time.Now()) {
+		mm.cooldownUntil = state.CooldownUntil
+	}
+	mm.version++
+	mm.persistRuntimeStateLocked("startup-restore")
+
+	log.Printf(
+		"[ManicMinute] Restored trigger word='%s' startChance=%.2f from persisted runtime state",
+		word,
+		mm.currentStartChanceLocked(),
+	)
+}
+
+func startMissCountForChance(chance float64) int {
+	base := manicMinuteBaseStartChance()
+	if chance <= base {
+		return 0
+	}
+
+	return int(math.Round((chance - base) / manicMinuteChanceStep))
 }
 
 func (mm *manicMinuteManager) persistRuntimeStateLocked(reason string) {
@@ -279,23 +333,37 @@ func pickManicMinuteCooldownDuration() time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
-func (mm *manicMinuteManager) recordStartRollMiss(expectedWord string) (float64, float64, bool) {
+// rollForStart validates state and performs the start-chance roll while
+// holding the lock, so the chance read, the roll, and the miss bookkeeping
+// cannot interleave with concurrent state changes.
+func (mm *manicMinuteManager) rollForStart(expectedWord string, roll func(chance float64) bool) (previous, next float64, passed, missRecorded bool) {
 	mm.lock.Lock()
 	defer mm.lock.Unlock()
 
-	mm.ensureInitializedLocked("start-roll-miss")
+	mm.ensureInitializedLocked("start-roll")
 
-	previous := mm.currentStartChanceLocked()
+	previous = mm.currentStartChanceLocked()
+	next = previous
+
 	if mm.active || expectedWord == "" || !strings.EqualFold(mm.triggerWord, expectedWord) {
-		return previous, previous, false
+		return previous, next, false, false
+	}
+
+	if roll(previous) {
+		return previous, next, true, false
 	}
 
 	mm.startMissCount++
 	mm.version++
-	next := mm.currentStartChanceLocked()
+	next = mm.currentStartChanceLocked()
 	mm.persistRuntimeStateLocked("start-roll-miss")
 
-	return previous, next, true
+	return previous, next, false, true
+}
+
+func (mm *manicMinuteManager) recordStartRollMiss(expectedWord string) (float64, float64, bool) {
+	previous, next, _, missRecorded := mm.rollForStart(expectedWord, func(float64) bool { return false })
+	return previous, next, missRecorded
 }
 
 func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, triggeredByUserID string, bypassCooldown bool) (string, bool) {
@@ -388,17 +456,30 @@ func manicMinuteEventStatus(reason string) string {
 	return "completed"
 }
 
-func (mm *manicMinuteManager) stop(reason string) (string, string, bool) {
+type manicMinuteStopResult struct {
+	PreviousWord string
+	NextWord     string
+	ChannelID    string
+	ServerID     string
+	Stopped      bool
+}
+
+func (mm *manicMinuteManager) stop(reason string) manicMinuteStopResult {
 	mm.lock.Lock()
 	defer mm.lock.Unlock()
 
 	mm.ensureInitializedLocked("stop")
 
 	if !mm.active {
-		return mm.triggerWord, mm.triggerWord, false
+		return manicMinuteStopResult{
+			PreviousWord: mm.triggerWord,
+			NextWord:     mm.triggerWord,
+		}
 	}
 
 	previous := mm.triggerWord
+	channelID := mm.activeChannelID
+	serverID := mm.activeServerID
 	eventID := mm.activeEventID
 	messageCount := mm.messageCount
 
@@ -432,7 +513,31 @@ func (mm *manicMinuteManager) stop(reason string) (string, string, bool) {
 		next,
 	)
 
-	return previous, next, true
+	return manicMinuteStopResult{
+		PreviousWord: previous,
+		NextWord:     next,
+		ChannelID:    channelID,
+		ServerID:     serverID,
+		Stopped:      true,
+	}
+}
+
+// queueConclusion asks the scheduler to deliver the conclusion lines to the
+// given channel on its next tick. Used when a minute is stopped from a
+// different channel than the one it is running in.
+func (mm *manicMinuteManager) queueConclusion(channelID, serverID string) {
+	if channelID == "" || serverID == "" {
+		return
+	}
+
+	mm.lock.Lock()
+	defer mm.lock.Unlock()
+
+	mm.pendingConclusion = &manicMinuteScheduleSnapshot{
+		ChannelID: channelID,
+		ServerID:  serverID,
+		Concluded: true,
+	}
 }
 
 func (mm *manicMinuteManager) snapshotForScheduledMessage(now time.Time) (*manicMinuteScheduleSnapshot, bool) {
@@ -440,6 +545,12 @@ func (mm *manicMinuteManager) snapshotForScheduledMessage(now time.Time) (*manic
 	defer mm.lock.Unlock()
 
 	mm.ensureInitializedLocked("schedule")
+
+	if mm.pendingConclusion != nil {
+		snapshot := mm.pendingConclusion
+		mm.pendingConclusion = nil
+		return snapshot, true
+	}
 
 	if !mm.active {
 		return nil, false
@@ -583,17 +694,26 @@ func manicMinuteHandler(svc *core2.Service, msg *core2.IncomingMessage) []*core2
 	InitializeManicMinute()
 
 	if isManicMinuteStopMessage(svc, msg) {
-		previous, next, stopped := manicMinuteState.stop("directed-stop")
-		if !stopped {
+		if !canUseDiscordAdminCommand(svc, msg) {
+			return core2.EmptyRsp()
+		}
+
+		result := manicMinuteState.stop("directed-stop")
+		if !result.Stopped {
 			return core2.EmptyRsp()
 		}
 
 		log.Printf(
 			"[ManicMinute] Directed stop by userID='%s' previous='%s' next='%s'",
 			msg.UserID,
-			previous,
-			next,
+			result.PreviousWord,
+			result.NextWord,
 		)
+
+		if result.ChannelID != msg.ChannelID {
+			manicMinuteState.queueConclusion(result.ChannelID, result.ServerID)
+			return core2.EmptyRsp()
+		}
 
 		return manicMinuteConclusionResponses()
 	}
@@ -607,10 +727,14 @@ func manicMinuteHandler(svc *core2.Service, msg *core2.IncomingMessage) []*core2
 		return core2.EmptyRsp()
 	}
 
-	startChance := manicMinuteState.statusSnapshot().StartChance
-	if !fromDefinedChance("manicMinuteHandler--start", startChance) {
-		previousChance, nextChance, recorded := manicMinuteState.recordStartRollMiss(triggerWord)
-		if recorded {
+	previousChance, nextChance, passed, missRecorded := manicMinuteState.rollForStart(
+		triggerWord,
+		func(chance float64) bool {
+			return fromDefinedChance("manicMinuteHandler--start", chance)
+		},
+	)
+	if !passed {
+		if missRecorded {
 			log.Printf(
 				"[ManicMinute] Trigger roll miss channelID='%s' serverID='%s' word='%s' chance=%.2f nextChance=%.2f",
 				msg.ChannelID,
@@ -777,7 +901,7 @@ func canTriggerManicMinute(svc *core2.Service, msg *core2.IncomingMessage) bool 
 		return false
 	}
 
-	if svc != nil && svc.DriverName() == "discord" && !ShouldRecordDiscordRawMessage(msg.ChannelID) {
+	if svc != nil && svc.DriverName() == "discord" && !shouldRecordDiscordRawMessage(msg.ChannelID) {
 		return false
 	}
 

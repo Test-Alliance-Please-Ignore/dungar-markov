@@ -17,13 +17,13 @@ lint: dep ## Lint all the files
 	$(GOPATH)/bin/golint -set_exit_status ${PKG_LIST}
 
 test: ## Run tests
-	@go test -mod=mod -parallel 8 ${PKG_LIST}
+	@IN_CI_ENV=1 go test -mod=mod -parallel 8 ${PKG_LIST}
 
 race: ## Run race detection
-	@go test -mod=mod -race -parallel 8 ${PKG_LIST}
+	@IN_CI_ENV=1 go test -mod=mod -race -parallel 8 ${PKG_LIST}
 
 msan: ## Run data race detector
-	@go test -mod=mod -msan -parallel 8 ${PKG_LIST}
+	@IN_CI_ENV=1 go test -mod=mod -msan -parallel 8 ${PKG_LIST}
 
 coverage: ## Generate global code coverage report
 	@bash ./tools/coverage.sh;

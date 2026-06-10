@@ -11,7 +11,7 @@ func rawMessageRecorder(svc *core2.Service, msg *core2.IncomingMessage) []*core2
 	case "slack":
 		db.LegacyRecordRawMessage(msg.Contents, "slack")
 	case "discord":
-		if !ShouldRecordDiscordRawMessage(msg.ChannelID) {
+		if !shouldRecordDiscordRawMessage(msg.ChannelID) {
 			return core2.EmptyRsp()
 		}
 
@@ -32,16 +32,5 @@ func rawMessageRecorder(svc *core2.Service, msg *core2.IncomingMessage) []*core2
 }
 
 func shouldRecordDiscordRawMessage(channelID string) bool {
-	return ShouldRecordDiscordRawMessage(channelID)
-}
-
-func ShouldRecordDiscordRawMessage(channelID string) bool {
-	allowed := utils.DiscordAllowedLearningChannelIDs()
-
-	if len(allowed) == 0 {
-		return true
-	}
-
-	_, ok := allowed[channelID]
-	return ok
+	return utils.IsDiscordLearningChannelAllowed(channelID)
 }

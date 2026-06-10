@@ -8,18 +8,18 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"gitlab.int.magneato.site/dungar/prototype/internal/db"
-	"gitlab.int.magneato.site/dungar/prototype/internal/triggers"
+	"gitlab.int.magneato.site/dungar/prototype/internal/utils"
 	"gitlab.int.magneato.site/dungar/prototype/library/core2"
 )
 
 func (d *Driver) handleMessageUpdateEvent(s *discordgo.Session, ev *discordgo.MessageUpdate) {
-	if ev == nil || isMessageFromSelf(s, ev.Message) || ev.Message == nil {
+	if ev == nil || ev.Message == nil || isMessageFromSelf(s, ev.Message) {
 		return
 	}
 
 	if !isConsumableDiscordUpdateMessage(ev.Message) {
 		if db.DeleteRawDiscordMessage(ev.ID) {
-			triggers.NotifyRawMessageMutation("discord-message-update-delete")
+			db.NotifyRawMessageMutation("discord-message-update-delete")
 		}
 
 		logEvent("message_update_empty", ev.Timestamp, ev)
@@ -81,10 +81,10 @@ func (d *Driver) handleMessageUpdateEvent(s *discordgo.Session, ev *discordgo.Me
 			msg.Contents,
 			ev.Timestamp.UTC(),
 		) {
-			triggers.NotifyRawMessageMutation("discord-message-update")
+			db.NotifyRawMessageMutation("discord-message-update")
 		}
 	} else if db.DeleteRawDiscordMessage(msg.ID) {
-		triggers.NotifyRawMessageMutation("discord-message-update-filtered")
+		db.NotifyRawMessageMutation("discord-message-update-filtered")
 	}
 
 	d.core.HandleIncomingMessage(msg)
@@ -141,7 +141,7 @@ func (d *Driver) handleMessageDeleteEvent(_ *discordgo.Session, ev *discordgo.Me
 	logEvent("message_delete", ev.Timestamp, ev)
 
 	if db.DeleteRawDiscordMessage(ev.ID) {
-		triggers.NotifyRawMessageMutation("discord-message-delete")
+		db.NotifyRawMessageMutation("discord-message-delete")
 	}
 
 	var (
@@ -170,7 +170,7 @@ func shouldSyncDiscordUpdateMessage(msg *core2.IncomingMessage) bool {
 		return false
 	}
 
-	if !triggers.ShouldRecordDiscordRawMessage(msg.ChannelID) {
+	if !utils.IsDiscordLearningChannelAllowed(msg.ChannelID) {
 		return false
 	}
 

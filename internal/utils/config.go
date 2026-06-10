@@ -183,6 +183,19 @@ func DiscordAllowedLearningChannelIDs() map[string]struct{} {
 	return DiscordAllowedOutputChannelIDs()
 }
 
+// IsDiscordLearningChannelAllowed reports whether the bot may learn from the
+// given channel. An empty allowlist means unrestricted learning.
+func IsDiscordLearningChannelAllowed(channelID string) bool {
+	allowed := DiscordAllowedLearningChannelIDs()
+
+	if len(allowed) == 0 {
+		return true
+	}
+
+	_, ok := allowed[channelID]
+	return ok
+}
+
 // SlackAccessToken will return the slack access token
 func SlackAccessToken() string {
 	if MustUseEnvVars() {

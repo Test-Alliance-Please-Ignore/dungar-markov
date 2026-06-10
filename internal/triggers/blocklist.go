@@ -49,21 +49,19 @@ func blocklistHandler(svc *core2.Service, msg *core2.IncomingMessage) []*core2.R
 		return core2.MakeSingleRsp(fmt.Sprintf("Failed to delete stored messages: %v", err))
 	}
 
-	rebuilt := markovV3Rebuild()
+	markovV3RebuildAsync("blocklist-" + targetUser.ID)
 	log.Printf(
-		"[blocklistHandler] Blocklisted userID='%s' nick='%s' deleted=%d rebuilt=%d",
+		"[blocklistHandler] Blocklisted userID='%s' nick='%s' deleted=%d; Markov rebuild queued",
 		targetUser.ID,
 		targetUser.Name,
 		deleted,
-		rebuilt,
 	)
 
 	return core2.MakeSingleRsp(fmt.Sprintf(
-		"Blocklisted @%s (%s), deleted %d stored messages, rebuilt Markov from %d messages.",
+		"Blocklisted @%s (%s), deleted %d stored messages; Markov rebuild started.",
 		targetUser.Name,
 		targetUser.ID,
 		deleted,
-		rebuilt,
 	))
 }
 

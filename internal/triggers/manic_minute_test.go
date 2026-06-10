@@ -85,6 +85,7 @@ func TestManicMinuteHandlerStopsAndRotatesTriggerWord(t *testing.T) {
 	svc := initMockServices()
 	manicMinuteTriggerWordPicker = sequentialManicMinuteWordPicker("skill", "banana")
 	masterChanceList["manicMinuteHandler--start"] = 1.0
+	mockDriver.AddUserRole("bob", "admin")
 
 	InitializeManicMinute()
 
@@ -106,6 +107,32 @@ func TestManicMinuteHandlerStopsAndRotatesTriggerWord(t *testing.T) {
 	assert.Equal(t, "New trigger word set.", rsp[1].Contents)
 	assert.False(t, manicMinuteState.isActive())
 	assert.Equal(t, "banana", manicMinuteState.currentTriggerWord())
+}
+
+func TestManicMinuteDirectedStopRequiresAdmin(t *testing.T) {
+	random.UseTestSeed()
+	useQuestionsTestMarkov(t)
+	withFreshManicMinuteState(t)
+
+	svc := initMockServices()
+	manicMinuteTriggerWordPicker = sequentialManicMinuteWordPicker("skill", "banana")
+	masterChanceList["manicMinuteHandler--start"] = 1.0
+
+	InitializeManicMinute()
+
+	startMsg := makeMessage("I do skill things", "bob", "butts")
+	startMsg.ServerID = "guild"
+	rsp := manicMinuteHandler(svc, startMsg)
+	assert.Len(t, rsp, 2)
+	assert.True(t, manicMinuteState.isActive())
+
+	stopMsg := makeMessage("@Dungar shut up!", "bob", "butts")
+	stopMsg.ServerID = "guild"
+	rsp = manicMinuteHandler(svc, stopMsg)
+
+	assert.True(t, isEmptyRsp(rsp))
+	assert.True(t, manicMinuteState.isActive())
+	assert.Equal(t, "skill", manicMinuteState.currentTriggerWord())
 }
 
 func TestManicMinuteSchedulerEndsAndRotatesTriggerWord(t *testing.T) {

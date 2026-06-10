@@ -117,12 +117,6 @@ func markovV3RebuildAsync(reason string) {
 	}()
 }
 
-// NotifyRawMessageMutation requests a rebuild of the active Markov model after
-// stored raw-message rows were edited or deleted.
-func NotifyRawMessageMutation(reason string) {
-	markovV3RebuildAsync(reason)
-}
-
 func markovPickWord() string {
 	switch activeMarkovVersion {
 	case mV1:
