@@ -97,7 +97,11 @@ docker compose exec -T postgres psql -U postgres -d dungar < infra/db/migrations
 - `dungar learn` exercises DB-backed learning in a standalone process
 - `dungar backfill-discord` imports the last 30 days from the configured Discord channels
 - `dungar manic-word` prints the current manic word, current chance, and cooldown remaining
+- `dungar manic-word rotate` picks a different random persisted manic word
+- `dungar manic-word set <word>` forces a specific persisted manic word
 - `dungar bot-info` shows protocol-specific bot metadata
+
+If `dungar run` is already running, restart it after `manic-word rotate` or `manic-word set` so the live bot reloads the new trigger word.
 
 ## Discord Bot Commands
 

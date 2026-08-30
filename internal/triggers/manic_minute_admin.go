@@ -93,7 +93,7 @@ func renderManicMinuteStatus(svc *core2.Service, msg *core2.IncomingMessage) str
 
 	parts := []string{
 		fmt.Sprintf("active=%t", status.Active),
-		fmt.Sprintf("cooldown_range=%dm-%dm", manicMinuteCooldownMinMinutes, manicMinuteCooldownMaxMinutes),
+		fmt.Sprintf("cooldown=%dm", manicMinuteCooldownMinutes),
 		fmt.Sprintf("channel_cooldown=%t", channelCooldown),
 		fmt.Sprintf("word_cooldown=%t", wordCooldown),
 	}

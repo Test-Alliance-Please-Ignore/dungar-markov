@@ -23,11 +23,12 @@ func blocklistHandler(svc *core2.Service, msg *core2.IncomingMessage) []*core2.R
 
 	pieces := strings.Fields(txt)
 	if len(pieces) < 3 {
-		return core2.MakeSingleRsp("Usage: !blocklist add @nick")
+		return core2.MakeSingleRsp("Usage: !blocklist <add|remove> @nick")
 	}
 
-	if strings.ToLower(pieces[1]) != "add" {
-		return core2.MakeSingleRsp("Usage: !blocklist add @nick")
+	command := strings.ToLower(pieces[1])
+	if command != "add" && command != "remove" {
+		return core2.MakeSingleRsp("Usage: !blocklist <add|remove> @nick")
 	}
 
 	if svc.DriverName() != "discord" && !utils.InTestEnv() {
@@ -38,6 +39,25 @@ func blocklistHandler(svc *core2.Service, msg *core2.IncomingMessage) []*core2.R
 	targetUser, err := resolveBlocklistTargetUser(svc, msg, targetText)
 	if err != nil {
 		return core2.MakeSingleRsp(fmt.Sprintf("Could not resolve blocklist target: %v", err))
+	}
+
+	if command == "remove" {
+		if err := db.RemoveRawMessageUserBlock("discord", msg.ServerID, targetUser.ID); err != nil {
+			return core2.MakeSingleRsp(fmt.Sprintf("Failed to update blocklist: %v", err))
+		}
+
+		markovV3RebuildAsync("blocklist-remove-" + targetUser.ID)
+		log.Printf(
+			"[blocklistHandler] Removed blocklist entry for userID='%s' nick='%s'; Markov rebuild queued",
+			targetUser.ID,
+			targetUser.Name,
+		)
+
+		return core2.MakeSingleRsp(fmt.Sprintf(
+			"Removed @%s (%s) from the blocklist; Markov rebuild started.",
+			targetUser.Name,
+			targetUser.ID,
+		))
 	}
 
 	if err := db.UpsertRawMessageUserBlock("discord", msg.ServerID, targetUser.ID, targetUser.Name); err != nil {

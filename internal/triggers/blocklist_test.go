@@ -56,3 +56,35 @@ func TestBlocklistHandlerAddsUserFromMention(t *testing.T) {
 		assert.True(t, db.IsRawMessageUserBlocked("discord", "arena", "blocked-user"))
 	})
 }
+
+func TestBlocklistHandlerRemovesUserFromMention(t *testing.T) {
+	utils.WithCICDEnvVars(func() {
+		svc := initMockServices()
+		mockDriver.SetUser("admin-user", "Admin User")
+		mockDriver.AddUserRole("admin-user", "admin")
+		mockDriver.SetUser("blocked-user", "Furrymatic")
+
+		userID := "blocked-user"
+		assert.NoError(t, db.UpsertRawMessageUserBlock("discord", "arena", userID, "Furrymatic"))
+		msg := &core2.IncomingMessage{
+			UserID:   "admin-user",
+			ServerID: "arena",
+			Contents: "!blocklist remove @Furrymatic",
+			ParsedContents: &core2.ParsedMessage{
+				Tokens: []core2.MessageToken{
+					{Token: "!blocklist", Type: core2.TokenWord},
+					{Token: " ", Type: core2.TokenSpace},
+					{Token: "remove", Type: core2.TokenWord},
+					{Token: " ", Type: core2.TokenSpace},
+					{Token: "<@blocked-user>", Type: core2.TokenUserID, Value: &userID},
+				},
+			},
+		}
+
+		rsp := blocklistHandler(svc, msg)
+
+		assert.Len(t, rsp, 1)
+		assert.Contains(t, rsp[0].Contents, "Removed @Furrymatic")
+		assert.False(t, db.IsRawMessageUserBlocked("discord", "arena", userID))
+	})
+}

@@ -3,7 +3,6 @@ package triggers
 import (
 	"fmt"
 	"log"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -16,12 +15,12 @@ import (
 )
 
 const (
-	manicMinuteDuration           = 1 * time.Minute
-	manicMinuteTick               = 5 * time.Second
-	manicMinuteCooldownMinMinutes = 5
-	manicMinuteCooldownMaxMinutes = 120
-	manicMinuteChanceStep         = 0.02
-	manicMinuteChanceMax          = 1.0
+	manicMinuteDuration        = 1 * time.Minute
+	manicMinuteTick            = 5 * time.Second
+	manicMinuteCooldownMinutes = 30
+	manicMinuteStartChance     = 1.0
+	manicMinuteManualMinRunes  = 2
+	manicMinuteAutoMinRunes    = 4
 )
 
 var manicMinuteStopPhrases = []string{
@@ -110,10 +109,9 @@ func (mm *manicMinuteManager) ensureInitializedLocked(reason string) {
 	}
 }
 
-// restoreRuntimeStateLocked reloads the persisted trigger word, accumulated
-// start chance, and cooldown so a restart continues where the last run left
-// off. An interrupted active minute is not resumed; the event is treated as
-// concluded.
+// restoreRuntimeStateLocked reloads the persisted trigger word and cooldown so
+// a restart continues where the last run left off. An interrupted active
+// minute is not resumed; the event is treated as concluded.
 func (mm *manicMinuteManager) restoreRuntimeStateLocked() {
 	if mm.restoreAttempted || !manicMinuteUsesPersistence() {
 		return
@@ -137,7 +135,7 @@ func (mm *manicMinuteManager) restoreRuntimeStateLocked() {
 	}
 
 	mm.triggerWord = word
-	mm.startMissCount = startMissCountForChance(state.StartChance)
+	mm.startMissCount = 0
 	if state.HasCooldown && state.CooldownUntil.After(time.Now()) {
 		mm.cooldownUntil = state.CooldownUntil
 	}
@@ -145,19 +143,9 @@ func (mm *manicMinuteManager) restoreRuntimeStateLocked() {
 	mm.persistRuntimeStateLocked("startup-restore")
 
 	log.Printf(
-		"[ManicMinute] Restored trigger word='%s' startChance=%.2f from persisted runtime state",
+		"[ManicMinute] Restored trigger word='%s' from persisted runtime state",
 		word,
-		mm.currentStartChanceLocked(),
 	)
-}
-
-func startMissCountForChance(chance float64) int {
-	base := manicMinuteBaseStartChance()
-	if chance <= base {
-		return 0
-	}
-
-	return int(math.Round((chance - base) / manicMinuteChanceStep))
 }
 
 func (mm *manicMinuteManager) persistRuntimeStateLocked(reason string) {
@@ -188,7 +176,7 @@ func (mm *manicMinuteManager) selectNewTriggerWordLocked(reason string) string {
 	next := ""
 
 	for attempt := 0; attempt < 20; attempt++ {
-		word := sanitizeManicMinuteTriggerWord(manicMinuteTriggerWordPicker())
+		word := sanitizeManicMinuteAutoTriggerWord(manicMinuteTriggerWordPicker())
 		if word == "" {
 			continue
 		}
@@ -208,7 +196,7 @@ func (mm *manicMinuteManager) selectNewTriggerWordLocked(reason string) string {
 	}
 
 	if next == "" {
-		next = sanitizeManicMinuteTriggerWord(markovPickWord())
+		next = sanitizeManicMinuteAutoTriggerWord(markovPickWord())
 	}
 
 	if next == "" {
@@ -304,65 +292,12 @@ func (mm *manicMinuteManager) statusSnapshot() manicMinuteStatus {
 	}
 }
 
-func manicMinuteBaseStartChance() float64 {
-	chance := masterChanceList["manicMinuteHandler--start"]
-	if chance < 0 {
-		return 0
-	}
-
-	if chance > manicMinuteChanceMax {
-		return manicMinuteChanceMax
-	}
-
-	return chance
-}
-
 func (mm *manicMinuteManager) currentStartChanceLocked() float64 {
-	chance := manicMinuteBaseStartChance() + (float64(mm.startMissCount) * manicMinuteChanceStep)
-	if chance > manicMinuteChanceMax {
-		return manicMinuteChanceMax
-	}
-
-	return chance
+	return manicMinuteStartChance
 }
 
 func pickManicMinuteCooldownDuration() time.Duration {
-	span := manicMinuteCooldownMaxMinutes - manicMinuteCooldownMinMinutes + 1
-	minutes := manicMinuteCooldownMinMinutes + random.Int(span)
-	return time.Duration(minutes) * time.Minute
-}
-
-// rollForStart validates state and performs the start-chance roll while
-// holding the lock, so the chance read, the roll, and the miss bookkeeping
-// cannot interleave with concurrent state changes.
-func (mm *manicMinuteManager) rollForStart(expectedWord string, roll func(chance float64) bool) (previous, next float64, passed, missRecorded bool) {
-	mm.lock.Lock()
-	defer mm.lock.Unlock()
-
-	mm.ensureInitializedLocked("start-roll")
-
-	previous = mm.currentStartChanceLocked()
-	next = previous
-
-	if mm.active || expectedWord == "" || !strings.EqualFold(mm.triggerWord, expectedWord) {
-		return previous, next, false, false
-	}
-
-	if roll(previous) {
-		return previous, next, true, false
-	}
-
-	mm.startMissCount++
-	mm.version++
-	next = mm.currentStartChanceLocked()
-	mm.persistRuntimeStateLocked("start-roll-miss")
-
-	return previous, next, false, true
-}
-
-func (mm *manicMinuteManager) recordStartRollMiss(expectedWord string) (float64, float64, bool) {
-	previous, next, _, missRecorded := mm.rollForStart(expectedWord, func(float64) bool { return false })
-	return previous, next, missRecorded
+	return time.Duration(manicMinuteCooldownMinutes) * time.Minute
 }
 
 func (mm *manicMinuteManager) start(channelID, serverID, triggerMessageID, triggeredByUserID string, bypassCooldown bool) (string, bool) {
@@ -725,26 +660,6 @@ func manicMinuteHandler(svc *core2.Service, msg *core2.IncomingMessage) []*core2
 		return core2.EmptyRsp()
 	}
 
-	previousChance, nextChance, passed, missRecorded := manicMinuteState.rollForStart(
-		triggerWord,
-		func(chance float64) bool {
-			return fromDefinedChance("manicMinuteHandler--start", chance)
-		},
-	)
-	if !passed {
-		if missRecorded {
-			log.Printf(
-				"[ManicMinute] Trigger roll miss channelID='%s' serverID='%s' word='%s' chance=%.2f nextChance=%.2f",
-				msg.ChannelID,
-				msg.ServerID,
-				triggerWord,
-				previousChance,
-				nextChance,
-			)
-		}
-		return core2.EmptyRsp()
-	}
-
 	word, started := manicMinuteState.start(msg.ChannelID, msg.ServerID, msg.ID, msg.UserID, false)
 	if !started {
 		return core2.EmptyRsp()
@@ -801,7 +716,7 @@ func defaultManicMinuteTriggerWordPicker() string {
 	)
 
 	if source != "" {
-		words := buildManicMinuteCandidateWords(source)
+		words := buildManicMinuteAutomaticCandidateWords(source)
 		if len(words) > 0 {
 			return random.PickString(words)
 		}
@@ -810,13 +725,21 @@ func defaultManicMinuteTriggerWordPicker() string {
 	return markovPickWord()
 }
 
-func buildManicMinuteCandidateWords(str string) []string {
+func buildManicMinuteAutomaticCandidateWords(str string) []string {
+	return buildManicMinuteCandidateWords(str, sanitizeManicMinuteAutoTriggerWord)
+}
+
+func buildManicMinuteMessageCandidateWords(str string) []string {
+	return buildManicMinuteCandidateWords(str, sanitizeManicMinuteTriggerWord)
+}
+
+func buildManicMinuteCandidateWords(str string, sanitizer func(string) string) []string {
 	words := utils.StringToWords(str, true)
 	out := make([]string, 0, len(words))
 	seen := make(map[string]struct{}, len(words))
 
 	for _, word := range words {
-		word = sanitizeManicMinuteTriggerWord(word)
+		word = sanitizer(word)
 		if word == "" {
 			continue
 		}
@@ -833,6 +756,14 @@ func buildManicMinuteCandidateWords(str string) []string {
 }
 
 func sanitizeManicMinuteTriggerWord(word string) string {
+	return sanitizeManicMinuteTriggerWordWithMinLen(word, manicMinuteManualMinRunes)
+}
+
+func sanitizeManicMinuteAutoTriggerWord(word string) string {
+	return sanitizeManicMinuteTriggerWordWithMinLen(word, manicMinuteAutoMinRunes)
+}
+
+func sanitizeManicMinuteTriggerWordWithMinLen(word string, minRunes int) string {
 	word = strings.TrimSpace(word)
 	if word == "" {
 		return ""
@@ -845,7 +776,7 @@ func sanitizeManicMinuteTriggerWord(word string) string {
 	word = utils.Normalize(word)
 	word = strings.TrimSpace(word)
 
-	if len([]rune(word)) < 4 {
+	if len([]rune(word)) < minRunes {
 		return ""
 	}
 
@@ -880,7 +811,7 @@ func messageContainsTriggerWord(contents, triggerWord string) bool {
 		return false
 	}
 
-	for _, word := range buildManicMinuteCandidateWords(contents) {
+	for _, word := range buildManicMinuteMessageCandidateWords(contents) {
 		if word == triggerWord {
 			return true
 		}

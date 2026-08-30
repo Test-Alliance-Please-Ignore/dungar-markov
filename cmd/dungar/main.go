@@ -42,7 +42,7 @@ func main() {
 		dcli.Learn()
 
 	case "manic-word", "manic-trigger":
-		dcli.PrintManicMinuteWord()
+		dcli.HandleManicWordCommand(os.Args[2:])
 
 	case "bot-info":
 		dcli.PrintBotInfo()
@@ -109,7 +109,7 @@ usage: dungar <routine> [options]
 routines:
   - dungar run
   - dungar learn
-  - dungar manic-word
+  - dungar manic-word [show|rotate|set <word>]
   - dungar bot-info
   - dungar backfill-discord
   - dungar import-fortunes <file>

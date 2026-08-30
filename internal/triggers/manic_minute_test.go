@@ -45,6 +45,7 @@ func sequentialManicMinuteWordPicker(words ...string) func() string {
 func TestMessageContainsTriggerWord(t *testing.T) {
 	assert.True(t, messageContainsTriggerWord("I do skill things", "skill"))
 	assert.True(t, messageContainsTriggerWord("I do skill things", "SKILL"))
+	assert.True(t, messageContainsTriggerWord("I want to go home", "to"))
 	assert.False(t, messageContainsTriggerWord("I brought a skillet", "skill"))
 }
 
@@ -55,7 +56,7 @@ func TestManicMinuteHandlerStartsAndSchedules(t *testing.T) {
 
 	svc := initMockServices()
 	manicMinuteTriggerWordPicker = sequentialManicMinuteWordPicker("skill")
-	masterChanceList["manicMinuteHandler--start"] = 1.0
+	masterChanceList["manicMinuteHandler--start"] = 0.0
 	mockDriver.SetUser("bob", "Bob")
 
 	InitializeManicMinute()
@@ -84,7 +85,6 @@ func TestManicMinuteHandlerStopsAndRotatesTriggerWord(t *testing.T) {
 
 	svc := initMockServices()
 	manicMinuteTriggerWordPicker = sequentialManicMinuteWordPicker("skill", "banana")
-	masterChanceList["manicMinuteHandler--start"] = 1.0
 	mockDriver.AddUserRole("bob", "admin")
 
 	InitializeManicMinute()
@@ -116,7 +116,6 @@ func TestManicMinuteDirectedStopRequiresAdmin(t *testing.T) {
 
 	svc := initMockServices()
 	manicMinuteTriggerWordPicker = sequentialManicMinuteWordPicker("skill", "banana")
-	masterChanceList["manicMinuteHandler--start"] = 1.0
 
 	InitializeManicMinute()
 
@@ -142,7 +141,6 @@ func TestManicMinuteSchedulerEndsAndRotatesTriggerWord(t *testing.T) {
 
 	svc := initMockServices()
 	manicMinuteTriggerWordPicker = sequentialManicMinuteWordPicker("skill", "banana")
-	masterChanceList["manicMinuteHandler--start"] = 1.0
 
 	InitializeManicMinute()
 
@@ -205,7 +203,7 @@ func TestManicMinuteAdminRotate(t *testing.T) {
 	assert.Equal(t, "banana", manicMinuteState.currentTriggerWord())
 }
 
-func TestManicMinuteStartChanceEscalatesAndResetsOnRotate(t *testing.T) {
+func TestManicMinuteStatusShowsGuaranteedTriggerChance(t *testing.T) {
 	withFreshManicMinuteState(t)
 
 	manicMinuteTriggerWordPicker = sequentialManicMinuteWordPicker("skill", "banana")
@@ -215,38 +213,18 @@ func TestManicMinuteStartChanceEscalatesAndResetsOnRotate(t *testing.T) {
 
 	status := manicMinuteState.statusSnapshot()
 	assert.Equal(t, "skill", status.TriggerWord)
-	assert.InDelta(t, 0.20, status.StartChance, 0.0001)
+	assert.InDelta(t, 1.0, status.StartChance, 0.0001)
 	assert.Equal(t, 0, status.StartMisses)
-
-	previous, next, recorded := manicMinuteState.recordStartRollMiss("skill")
-	assert.True(t, recorded)
-	assert.InDelta(t, 0.20, previous, 0.0001)
-	assert.InDelta(t, 0.22, next, 0.0001)
-
-	status = manicMinuteState.statusSnapshot()
-	assert.InDelta(t, 0.22, status.StartChance, 0.0001)
-	assert.Equal(t, 1, status.StartMisses)
-
-	previous, next, recorded = manicMinuteState.recordStartRollMiss("skill")
-	assert.True(t, recorded)
-	assert.InDelta(t, 0.22, previous, 0.0001)
-	assert.InDelta(t, 0.24, next, 0.0001)
 
 	_, rotated := manicMinuteState.rotate("test-rotate")
 	assert.Equal(t, "banana", rotated)
 
 	status = manicMinuteState.statusSnapshot()
 	assert.Equal(t, "banana", status.TriggerWord)
-	assert.InDelta(t, 0.20, status.StartChance, 0.0001)
+	assert.InDelta(t, 1.0, status.StartChance, 0.0001)
 	assert.Equal(t, 0, status.StartMisses)
 }
 
-func TestPickManicMinuteCooldownDurationRange(t *testing.T) {
-	random.UseTestSeed()
-
-	for i := 0; i < 100; i++ {
-		duration := pickManicMinuteCooldownDuration()
-		assert.GreaterOrEqual(t, duration, 5*time.Minute)
-		assert.LessOrEqual(t, duration, 120*time.Minute)
-	}
+func TestPickManicMinuteCooldownDurationFixed(t *testing.T) {
+	assert.Equal(t, 30*time.Minute, pickManicMinuteCooldownDuration())
 }

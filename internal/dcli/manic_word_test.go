@@ -28,22 +28,34 @@ func TestFormatManicMinuteWordWithCooldown(t *testing.T) {
 	now := time.Date(2026, time.June, 9, 16, 30, 0, 0, time.UTC)
 	state := &db.ManicMinuteRuntimeState{
 		TriggerWord:   "week",
-		StartChance:   0.26,
 		HasCooldown:   true,
 		CooldownUntil: now.Add(17*time.Minute + 30*time.Second),
 	}
 
 	got := formatManicMinuteWord(state, now)
-	assert.Equal(t, "Current manic-word: week (current chance: 26%, cooldown remaining: 17m30s)", got)
+	assert.Equal(t, "Current manic-word: week (cooldown remaining: 17m30s)", got)
 }
 
 func TestFormatManicMinuteWordWithoutCooldown(t *testing.T) {
 	now := time.Date(2026, time.June, 9, 16, 30, 0, 0, time.UTC)
 	state := &db.ManicMinuteRuntimeState{
 		TriggerWord: "week",
-		StartChance: 0.20,
 	}
 
 	got := formatManicMinuteWord(state, now)
-	assert.Equal(t, "Current manic-word: week (current chance: 20%, cooldown remaining: none)", got)
+	assert.Equal(t, "Current manic-word: week (cooldown remaining: none)", got)
+}
+
+func TestSanitizeManicMinuteCLITriggerWord(t *testing.T) {
+	assert.Equal(t, "bacon", sanitizeManicMinuteCLITriggerWord(" Bacon "))
+	assert.Equal(t, "skill_issue", sanitizeManicMinuteCLITriggerWord("skill_issue"))
+	assert.Equal(t, "to", sanitizeManicMinuteCLITriggerWord("to"))
+	assert.Equal(t, "", sanitizeManicMinuteCLITriggerWord("x"))
+	assert.Equal(t, "", sanitizeManicMinuteCLITriggerWord("https://example.com"))
+	assert.Equal(t, "", sanitizeManicMinuteCLITriggerWord("@dungar"))
+}
+
+func TestBuildManicMinuteCLIAutomaticCandidateWords(t *testing.T) {
+	got := buildManicMinuteCLIAutomaticCandidateWords("to Bacon week bacon <@123> https://example.com skill-issue")
+	assert.Equal(t, []string{"bacon", "week", "skill-issue"}, got)
 }
